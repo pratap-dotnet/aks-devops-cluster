@@ -1,6 +1,7 @@
 RESOURCEGROUP=myResourceGroup
 LOCATION=southeastasia
 CLUSTERNAME=aksdevops
+DNSNAME=pbaksdevops
 
 az group create --name $RESOURCEGROUP --location $LOCATION
 
@@ -12,15 +13,7 @@ az aks install-cli
 az aks get-credentials --resource-group $RESOURCEGROUP --name $CLUSTERNAME
 #Install helm tiller in the kubernetes cluster
 helm init
-PUBLICIP=devops-ip
 NODERESOURCEGROUP=$(az aks show --resource-group $RESOURCEGROUP --name $CLUSTERNAME --query nodeResourceGroup -o tsv)
-
-az network public-ip create \
-    --resource-group $NODERESOURCEGROUP \
-    --name $PUBLICIP \
-    --allocation-method static
-
-IPADDRESS=$(az network public-ip show --resource-group $NODERESOURCEGROUP --name $PUBLICIP --query ipAdress -o tsv)
 
 kubectl create serviceaccount --namespace kube-system tiller
 kubectl create clusterrolebinding tiller-cluster-rule --clusterrole=cluster-admin --serviceaccount=kube-system:tiller
@@ -29,10 +22,8 @@ kubectl patch deploy --namespace kube-system tiller-deploy -p '{"spec":{"templat
 #Install niginx ingress
 helm install stable/nginx-ingress \
     --namespace kube-system \
-    --set controller.service.loadBalancerIP=$IPADDRESS  \
     --set controller.replicaCount=2 
 
-DNSNAME=pbaksdevops
 PUBLICIPID=$(az network public-ip list --query "[?ipAddress!=null]|[?contains(ipAddress, '$IP')].[id]" --output tsv)
 
 az network public-ip update --ids $PUBLICIPID --dns-name $DNSNAME
@@ -50,4 +41,11 @@ helm install stable/cert-manager \
 
 kubectl apply -f cluster-issuer.yaml
 
-kubectl apply -f certificates.yaml
+kubectl apply -f certificates.yaml \
+    --set dnsNames=$DNSNAME \
+    --set acme.config.domains=$DNSNAME
+
+# Deploy Jenkins
+helm install stable/jenkins \
+    -f jenkins.yaml \
+    --set ingress.tls.hosts=$DNSNAME
